@@ -66,6 +66,7 @@ jobs:
   build:
     name: Build OrangeFox by ${{ github.actor }}
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     permissions:
@@ -169,6 +170,7 @@ jobs:
         echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
 
     - name: Update OrangeFox Built-in Magisk
+      if: false
       run: |
         git clone https://github.com/ymdzq/twrp_prebuilt ~/twrp_prebuilt
         cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/${{ inputs.DEVICE_PATH }}
