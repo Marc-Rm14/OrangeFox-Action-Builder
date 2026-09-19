@@ -119,7 +119,19 @@ jobs:
         git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
         git clone https://gitlab.com/OrangeFox/sync.git -b master
         cd sync
-        ./orangefox_sync.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+
+        MAX_RETRIES=3
+        COUNT=0
+        until ./orangefox_sync.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }} || [ $COUNT -eq $MAX_RETRIES ]; do
+          COUNT=$((COUNT+1))
+          echo "La sincronización falló por problemas de servidor/red. Reintentando ($COUNT/$MAX_RETRIES)..."
+          sleep 10
+        done
+        
+        if [ $COUNT -eq $MAX_RETRIES ]; then
+          echo "No se pudo sincronizar el manifiesto tras varios intentos."
+          exit 1
+        fi
 
     - name: Clone Android13+ Dependencies For 12.1 Branch
       if: inputs.MANIFEST_BRANCH == '12.1'
@@ -184,7 +196,8 @@ jobs:
 
     - name: Update OrangeFox Built-in magiskboot
       run: |
-        curl -L --retry 3 $(echo $(curl -s "https://api.github.com/repos/topjohnwu/Magisk/releases?per_page=1&include_prereleases=true") | jq -r '.[0].assets[] | select(.name | test("Magisk-.*\\.apk")) | .browser_download_url') -o Magisk.apk
+        DOWNLOAD_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/topjohnwu/Magisk/releases?per_page=1&include_prereleases=true" | jq -r '.[0].assets[] | select(.name | test("Magisk-.*\\.apk")) | .browser_download_url')
+        curl -L --retry 3 "$DOWNLOAD_URL" -o Magisk.apk
         unzip -q Magisk.apk "lib/*/libmagiskboot.so" -d ~/magiskboot
         cp -f ~/magiskboot/lib/armeabi-v7a/libmagiskboot.so "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/vendor/recovery/prebuilt/arm/magiskboot_updated"
         cp -f ~/magiskboot/lib/arm64-v8a/libmagiskboot.so "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/vendor/recovery/prebuilt/arm64/magiskboot_updated"
