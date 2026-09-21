@@ -231,22 +231,7 @@ jobs:
     
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-    
-        echo "=== DEBUG: ORIGEN FIRST_STAGE RAMDISK ==="
-    
-        grep -R \
-          -n -E \
-          "e2fsck\.ramdisk|fsck\.f2fs\.ramdisk|first_stage_ramdisk/system/bin/e2fsck|first_stage_ramdisk/system/bin/fsck\.f2fs" \
-          build system device/xiaomi/spinel \
-          2>/dev/null | head -100
-    
-        echo "=== DEBUG: FIRST_STAGE RAMDISK ==="
-    
-        grep -R \
-          -n "first_stage_ramdisk" \
-          build/make/core system/core \
-          2>/dev/null | head -150
-    
+        
         set -e
     
         if [[ 14.1 == '14.1' ]]; then
@@ -255,6 +240,20 @@ jobs:
           lunch twrp_spinel-eng && make clean && mka adbd vendorbootimage
         fi
 
+    - name: Build system-compatible vendor_boot
+      run: |
+        set -e
+
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_14.1
+
+        chmod +x \
+          device/xiaomi/spinel/tools/prepare-platform-ramdisk.sh \
+          device/xiaomi/spinel/tools/build-system-compatible-vendor-boot.sh
+
+        device/xiaomi/spinel/tools/prepare-platform-ramdisk.sh
+
+        device/xiaomi/spinel/tools/build-system-compatible-vendor-boot.sh
+        
     - name: Set Release Properties
       run: |
         echo "BUILD_DATE=$(TZ=Asia/Shanghai date +%Y%m%d)" >> $GITHUB_ENV
