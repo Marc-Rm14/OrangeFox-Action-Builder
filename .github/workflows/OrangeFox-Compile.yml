@@ -194,15 +194,30 @@ jobs:
         fi
         git am Magisk_ver.patch
 
-    - name: Update OrangeFox Built-in magiskboot
+    - name: Download and prepare magiskboot
       run: |
-        DOWNLOAD_URL=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "https://api.github.com/repos/topjohnwu/Magisk/releases?per_page=1&include_prereleases=true" | jq -r '.[0].assets[] | select(.name | test("Magisk-.*\\.apk")) | .browser_download_url')
-        curl -L --retry 3 "$DOWNLOAD_URL" -o Magisk.apk
-        unzip -q Magisk.apk "lib/*/libmagiskboot.so" -d ~/magiskboot
-        cp -f ~/magiskboot/lib/armeabi-v7a/libmagiskboot.so "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/vendor/recovery/prebuilt/arm/magiskboot_updated"
-        cp -f ~/magiskboot/lib/arm64-v8a/libmagiskboot.so "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/vendor/recovery/prebuilt/arm64/magiskboot_updated"
-        cp -f ~/magiskboot/lib/x86_64/libmagiskboot.so "${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/vendor/recovery/tools/magiskboot"
+        DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/topjohnwu/Magisk/releases?per_page=1&include_prereleases=true" | jq -r '.[0].assets[] | select(.name | test("Magisk-.*\\.apk")) | .browser_download_url')
 
+        if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+          echo "Error: No se pudo obtener la URL de descarga de Magisk."
+          exit 1
+        fi
+
+        echo "Descargando desde: $DOWNLOAD_URL"
+        curl -L --retry 3 "$DOWNLOAD_URL" -o Magisk.apk
+
+        mkdir -p ~/magiskboot
+        unzip -q Magisk.apk "lib/*/libmagiskboot.so" -d ~/magiskboot
+
+        FOX_PATH="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}"
+
+        mkdir -p "${FOX_PATH}/vendor/recovery/prebuilt/arm"
+        mkdir -p "${FOX_PATH}/vendor/recovery/prebuilt/arm64"
+        mkdir -p "${FOX_PATH}/vendor/recovery/tools"
+
+        cp -f ~/magiskboot/lib/armeabi-v7a/libmagiskboot.so "${FOX_PATH}/vendor/recovery/prebuilt/arm/magiskboot_updated"
+        cp -f ~/magiskboot/lib/arm64-v8a/libmagiskboot.so "${FOX_PATH}/vendor/recovery/prebuilt/arm64/magiskboot_updated"
+        cp -f ~/magiskboot/lib/x86_64/libmagiskboot.so "${FOX_PATH}/vendor/recovery/tools/magiskboot"
 
     - name: Building OrangeFox
       run: |
