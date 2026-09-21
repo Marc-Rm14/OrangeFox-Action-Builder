@@ -222,20 +222,6 @@ jobs:
         lunch twrp_${{ inputs.DEVICE_NAME }}-eng && make clean && mka adbd ${{ inputs.BUILD_TARGET }}image
         fi
 
-    - name: Build system-compatible vendor_boot
-      run: |
-        set -e
-
-        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_14.1
-
-        chmod +x \
-          device/xiaomi/spinel/tools/prepare-platform-ramdisk.sh \
-          device/xiaomi/spinel/tools/build-system-compatible-vendor-boot.sh
-
-        device/xiaomi/spinel/tools/prepare-platform-ramdisk.sh
-
-        device/xiaomi/spinel/tools/build-system-compatible-vendor-boot.sh
-
     - name: Set Release Properties
       run: |
         echo "BUILD_DATE=$(TZ=Asia/Shanghai date +%Y%m%d)" >> $GITHUB_ENV
