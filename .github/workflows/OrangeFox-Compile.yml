@@ -115,16 +115,20 @@ jobs:
       # Keep a small reserve for the runner itself.
       # ------------------------------------------------------------
       - name: Maximize build space
-        uses: easimon/maximize-build-space@master
+        uses: easimon/maximize-build-space@v10
         with:
           root-reserve-mb: 4096
           temp-reserve-mb: 1024
           swap-size-mb: 4096
+
+          # No los necesitamos para OrangeFox
           remove-dotnet: 'true'
           remove-android: 'false'
           remove-haskell: 'true'
           remove-codeql: 'true'
-          remove-docker-images: 'true'
+
+          # NO tocar Docker
+          remove-docker-images: 'false'
 
       # ------------------------------------------------------------
       # Checkout workflow repository
