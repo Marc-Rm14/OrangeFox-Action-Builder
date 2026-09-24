@@ -83,8 +83,18 @@ jobs:
       run: |
         set -euo pipefail
         sudo apt-get update
-        sudo apt-get install -y aria2 zram-tools bc bison build-essential ccache cpio curl device-tree-compiler flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses-dev lib32readline-dev lib32z1-dev libelf-dev liblz4-tool libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lz4 pngcrush rsync schedtool squashfs-tools unzip xsltproc zip zlib1g-dev mkbootimg
+        sudo apt-get install -y \
+          aria2 zram-tools bc bison build-essential ccache cpio curl \
+          device-tree-compiler flex g++-multilib gcc-multilib git gnupg gperf \
+          imagemagick libelf-dev liblz4-tool libncurses5-dev libssl-dev \
+          libxml2 libxml2-utils lz4 pngcrush rsync schedtool squashfs-tools \
+          unzip xsltproc zip zlib1g-dev mkbootimg
 
+        # Script oficial de OrangeFox para preparar entornos de compilación Android en distros recientes
+        git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master /tmp/ofox_scripts
+        sudo bash /tmp/ofox_scripts/setup/android_build_env.sh
+        rm -rf /tmp/ofox_scripts
+        
     - name: Checkout
       uses: actions/checkout@main
 
@@ -92,7 +102,7 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2
       if: inputs.USE_CCACHE
       with:
-        max-size: "2G"
+        max-size: "5G"
         create-symlink: true
 
     - name: Setup zram
