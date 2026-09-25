@@ -1,5 +1,11 @@
 name: OrangeFox - Build
 
+# Credits to:
+# https://github.com/TeamWin
+# https://gitlab.com/OrangeFox
+# https://github.com/azwhikaru for Recovery Builder Template
+# And all Contributors in every repositories I used
+
 on:
   workflow_dispatch:
     inputs:
@@ -9,568 +15,254 @@ on:
         default: '14.1'
         type: choice
         options:
-          - 12.1
-          - 14.1
-
+        - 12.1
+        - 14.1
       DEVICE_TREE:
         description: 'OrangeFox Device Tree'
         required: true
         default: 'https://github.com/Marc-Rm14/android_device_xiaomi_spinel'
-
       DEVICE_TREE_BRANCH:
         description: 'OrangeFox Device Tree Branch'
         required: true
         default: 'test-f-fox-reference'
-
       DEVICE_PATH:
-        description: 'Device Path'
+        description: 'Specify your Device Path'
         required: true
         default: 'device/xiaomi/spinel'
-
       DEVICE_NAME:
-        description: 'Device Codename'
+        description: 'Specify your Device Codename'
         required: true
         default: 'spinel'
-
       BUILD_TARGET:
-        description: 'Build Target'
+        description: 'Specify your Build Target'
         required: true
         default: 'vendorboot'
         type: choice
         options:
-          - boot
-          - recovery
-          - vendorboot
-
+        - boot
+        - recovery
+        - vendorboot
+      MAGISK_VERSION:
+        description: 'Specify your Magisk Version'
+        required: true
+        default: 'Magisk'
+        type: choice
+        options:
+        - Magisk
+        - MagiskAlpha
+        - MagiskDelta
       ADD_WLAN_SUPPORT:
-        description: 'Add WLAN support (EXPERIMENTAL)'
+        description: 'Add WLAN support (EXPERIMENTAL!!)'
         type: boolean
         required: true
         default: false
-
       USE_CCACHE:
-        description: 'Use ccache'
+        description: Use ccache for compilation
         type: boolean
         required: true
         default: true
 
 jobs:
   build:
-    name: Build OrangeFox ${{ inputs.MANIFEST_BRANCH }} - ${{ inputs.DEVICE_NAME }}
+    name: Build OrangeFox by ${{ github.actor }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
-    permissions:
-      contents: write
-
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      FOX_BRANCH: ${{ inputs.MANIFEST_BRANCH }}
-      FOX_PATH: ${{ github.workspace }}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
-
+    permissions:
+      contents: write
     steps:
-
-      # ------------------------------------------------------------
-      # Cleanup unnecessary preinstalled packages
-      # ------------------------------------------------------------
-      - name: Cleanup runner
-        uses: rokibhasansagar/slimhub_actions@main
-
-      # ------------------------------------------------------------
-      # Android build environment
-      # ------------------------------------------------------------
-      - name: Build Environment
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            aria2 \
-            zram-tools \
-            unzip \
-            curl \
-            jq \
-            git \
-            rsync
-
-          git clone \
-            https://gitlab.com/OrangeFox/misc/scripts.git \
-            -b master \
-            "${RUNNER_TEMP}/orangefox-scripts"
-
-          sudo bash \
-            "${RUNNER_TEMP}/orangefox-scripts/setup/android_build_env.sh"
-
-          rm -rf "${RUNNER_TEMP}/orangefox-scripts"
-
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
-
-      # ------------------------------------------------------------
-      # Maximize build disk
-      #
-      # OrangeFox 14.1 needs a large source tree.
-      # Keep a small reserve for the runner itself.
-      # ------------------------------------------------------------
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@v10
-        with:
-          root-reserve-mb: 4096
-          temp-reserve-mb: 1024
-          swap-size-mb: 4096
-
-          # No los necesitamos para OrangeFox
-          remove-dotnet: 'true'
-          remove-android: 'false'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-
-          # NO tocar Docker
-          remove-docker-images: 'false'
-
-      # ------------------------------------------------------------
-      # Checkout workflow repository
-      # ------------------------------------------------------------
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-
-      # ------------------------------------------------------------
-      # ccache
-      #
-      # 8 GB gives Android/OrangeFox enough room without
-      # consuming excessive runner storage.
-      # ------------------------------------------------------------
-      - name: Setup ccache
-        if: inputs.USE_CCACHE
-        uses: hendrikmuhs/ccache-action@v1.2.16
-        with:
-          max-size: 8G
-          create-symlink: true
-
-      # ------------------------------------------------------------
-      # Configure swap
-      #
-      # Avoid using 90% zram. A moderate swap is more predictable
-      # on the 16 GB GitHub runner.
-      # ------------------------------------------------------------
-      - name: Setup swap
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if command -v zramctl >/dev/null 2>&1; then
-            sudo modprobe zram || true
-          fi
-
-          if [ -f /etc/default/zramswap ]; then
-            sudo sed -i 's/^#\?PERCENT=.*/PERCENT=25/' \
-              /etc/default/zramswap
-
-            sudo sed -i 's/^#\?PRIORITY=.*/PRIORITY=100/' \
-              /etc/default/zramswap
-
-            sudo systemctl restart zramswap || true
-          fi
-
-          free -h
-          zramctl || true
-
-      # ------------------------------------------------------------
-      # Sync OrangeFox
-      # ------------------------------------------------------------
-      - name: Set-up Manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p "${GITHUB_WORKSPACE}/OrangeFox"
-
-          cd "${GITHUB_WORKSPACE}/OrangeFox"
-
-          git config --global user.name "${{ github.actor }}"
-          git config --global user.email \
-            "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
-
-          rm -rf sync
-
-          git clone \
-            https://gitlab.com/OrangeFox/sync.git \
-            -b master \
-            sync
-
-          cd sync
-
-          MAX_RETRIES=3
-          COUNT=0
-
-          until ./orangefox_sync.sh \
-            --branch "${{ inputs.MANIFEST_BRANCH }}" \
-            --path "${FOX_PATH}"
-          do
-            COUNT=$((COUNT + 1))
-
-            if [ "$COUNT" -ge "$MAX_RETRIES" ]; then
-              echo "OrangeFox sync failed after ${MAX_RETRIES} attempts."
-              exit 1
-            fi
-
-            echo "Sync failed. Retrying ${COUNT}/${MAX_RETRIES}..."
-            sleep 10
-          done
-
-      # ------------------------------------------------------------
-      # 12.1 compatibility
-      # ------------------------------------------------------------
-      - name: Clone Android13+ Dependencies For 12.1
-        if: inputs.MANIFEST_BRANCH == '12.1'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "${FOX_PATH}"
-
-          sed -i \
-            's/<project name="android_hardware_qcom_bootctrl" path="hardware\/qcom-caf\/bootctrl" remote="LineageOS" revision="lineage-19.1-caf" \/>/<project name="android_hardware_qcom_bootctrl" path="hardware\/qcom-caf\/bootctrl" remote="LineageOS" revision="lineage-21.0-caf" \/>/g' \
-            .repo/manifests/twrp-default.xml
-
-          sed -i \
-            '/<!-- Include phh'\''s treble repo for lptools support -->/i \
-            <!-- Include libmicrohttpd for TWRP -->\
-            <project name="adontoo/android_external_libmicrohttpd" path="external/libmicrohttpd" remote="github" revision="ofox-14.1" />\
-            ' \
-            .repo/manifests/twrp-default.xml
-
-          sed -i \
-            '/<project path="bootable\/recovery" name="android_bootable_recovery" remote="TeamWin" revision="android-12.1"\/>/d' \
-            .repo/manifests/twrp-default.xml
-
-          mv bootable/recovery bootable/recovery-ofrp
-
-          repo sync
-
-          mv bootable/recovery-ofrp bootable/recovery
-
-          cd bionic
-
-          wget -q \
-            "https://github.com/adontoo/OrangeFox-android_platform_bionic/commit/85b1a7100083006927376f30bb8a67885c6dd71f.patch" \
-            -O bionic.patch
-
-          git am bionic.patch
-
-          cd "${FOX_PATH}/external/libmicrohttpd"
-
-          sed -i \
-            's/^static enum MHD_Result send_response/static enum MHD_Result __attribute__((unused)) send_response/' \
-            server.c
-
-      # ------------------------------------------------------------
-      # 12.1 recovery patches
-      # ------------------------------------------------------------
-      - name: Patch Recovery For 12.1
-        if: inputs.MANIFEST_BRANCH == '12.1'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "${FOX_PATH}/bootable/recovery"
-
-          git remote add ymdzq \
-            https://github.com/ymdzq/OrangeFox_Recovery
-
-          git fetch ymdzq fox_12.1
-
-          git merge \
-            --no-ff \
-            ymdzq/fox_12.1 \
-            -m "Apply custom OrangeFox patches"
-
-          if [ "${{ inputs.ADD_WLAN_SUPPORT }}" = "true" ]; then
-
-            wget -q \
-              "https://github.com/ymdzq/OrangeFox_Recovery/commit/f8712872b9ec663b658a1e8eba4840877fe45ea6.patch" \
-              -O wlan.patch
-
-            git am wlan.patch
-
-            wget -q \
-              "https://github.com/ymdzq/OrangeFox_Recovery/commit/55743730c43681a777c4eacddd9d64a84dce3a54.patch" \
-              -O wlan2.patch
-
-            git am wlan2.patch
-
-          fi
-
-      # ------------------------------------------------------------
-      # 14.1 WLAN support
-      # ------------------------------------------------------------
-      - name: Add WLAN support For 14.1
-        if: inputs.MANIFEST_BRANCH == '14.1' && inputs.ADD_WLAN_SUPPORT
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "${FOX_PATH}"
-
-          git clone \
-            https://github.com/adontoo/android_external_libmicrohttpd \
-            -b ofox-14.1 \
-            external/libmicrohttpd
-
-          rm -rf bionic
-
-          git clone \
-            https://github.com/adontoo/OrangeFox-android_platform_bionic \
-            bionic
-
-          cd bootable/recovery
-
-          wget -q \
-            "https://github.com/adontoo/device_xiaomi_sm8750_OFRP/raw/refs/heads/fox_14.1/patches/ofox_bootable_recovery.patch" \
-            -O wlan.patch
-
-          git apply wlan.patch
-
-          wget -q \
-            "https://github.com/ymdzq/OrangeFox_Recovery/commit/55743730c43681a777c4eacddd9d64a84dce3a54.patch" \
-            -O wlan2.patch
-
-          git apply wlan2.patch
-
-      # ------------------------------------------------------------
-      # Clone device tree
-      # ------------------------------------------------------------
-      - name: Clone Device Tree
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "${FOX_PATH}"
-
-          mkdir -p "$(dirname "${{ inputs.DEVICE_PATH }}")"
-
-          rm -rf "${{ inputs.DEVICE_PATH }}"
-
-          git clone \
-            "${{ inputs.DEVICE_TREE }}" \
-            -b "${{ inputs.DEVICE_TREE_BRANCH }}" \
-            "${{ inputs.DEVICE_PATH }}"
-
-          cd "${{ inputs.DEVICE_PATH }}"
-
-          echo "COMMIT_ID=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
-      # ------------------------------------------------------------
-      # magiskboot
-      # ------------------------------------------------------------
-      - name: Download and prepare magiskboot
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DOWNLOAD_URL="$(
-            curl -fsSL \
-              "https://api.github.com/repos/topjohnwu/Magisk/releases?per_page=1&include_prereleases=true" |
-            jq -r '
-              .[0].assets[]
-              | select(.name | test("Magisk-.*\\.apk"))
-              | .browser_download_url
-            ' |
-            head -n1
-          )"
-
-          if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
-            echo "Unable to locate Magisk APK."
-            exit 1
-          fi
-
-          echo "Downloading Magisk..."
-
-          curl -fL \
-            --retry 5 \
-            --retry-delay 3 \
-            "$DOWNLOAD_URL" \
-            -o "${RUNNER_TEMP}/Magisk.apk"
-
-          rm -rf "${RUNNER_TEMP}/magiskboot"
-
-          mkdir -p "${RUNNER_TEMP}/magiskboot"
-
-          unzip -q \
-            "${RUNNER_TEMP}/Magisk.apk" \
-            "lib/*/libmagiskboot.so" \
-            -d "${RUNNER_TEMP}/magiskboot"
-
-          mkdir -p \
-            "${FOX_PATH}/vendor/recovery/prebuilt/arm" \
-            "${FOX_PATH}/vendor/recovery/prebuilt/arm64" \
-            "${FOX_PATH}/vendor/recovery/tools"
-
-          cp -f \
-            "${RUNNER_TEMP}/magiskboot/lib/armeabi-v7a/libmagiskboot.so" \
-            "${FOX_PATH}/vendor/recovery/prebuilt/arm/magiskboot_updated"
-
-          cp -f \
-            "${RUNNER_TEMP}/magiskboot/lib/arm64-v8a/libmagiskboot.so" \
-            "${FOX_PATH}/vendor/recovery/prebuilt/arm64/magiskboot_updated"
-
-          cp -f \
-            "${RUNNER_TEMP}/magiskboot/lib/x86_64/libmagiskboot.so" \
-            "${FOX_PATH}/vendor/recovery/tools/magiskboot"
-
-      # ------------------------------------------------------------
-      # Build
-      # ------------------------------------------------------------
-      - name: Build OrangeFox
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "${FOX_PATH}"
-
-          if [ "${{ inputs.USE_CCACHE }}" = "true" ]; then
-            export USE_CCACHE=1
-            export CCACHE_EXEC=/usr/bin/ccache
-            export CCACHE_DIR="${HOME}/.ccache"
-
-            ccache -M 8G
-          else
-            export USE_CCACHE=0
-          fi
-
-          export ALLOW_MISSING_DEPENDENCIES=true
-
-          # Required workaround for the current OrangeFox/Soong
-          # environment used by this workflow.
-          sed -i \
-            's/return sandboxConfig\.working/return false/g' \
-            build/soong/ui/build/sandbox_linux.go
-
-          source build/envsetup.sh
-
-          if [ "${{ inputs.MANIFEST_BRANCH }}" = "14.1" ]; then
-            lunch twrp_${{ inputs.DEVICE_NAME }}-ap2a-eng
-          else
-            lunch twrp_${{ inputs.DEVICE_NAME }}-eng
-          fi
-
-          echo "========================================"
-          echo "OrangeFox build configuration"
-          echo "Branch : ${FOX_BRANCH}"
-          echo "Device : ${{ inputs.DEVICE_NAME }}"
-          echo "Target : ${{ inputs.BUILD_TARGET }}"
-          echo "========================================"
-
-          # IMPORTANT:
-          # Do not run make clean here.
-          # ccache and the existing out/ tree are intentionally reused.
-
-          case "${{ inputs.BUILD_TARGET }}" in
-            boot)
-              mka -j"$(nproc)" adbd bootimage
-              ;;
-
-            recovery)
-              mka -j"$(nproc)" adbd recoveryimage
-              ;;
-
-            vendorboot)
-              mka -j"$(nproc)" adbd vendorbootimage
-              ;;
-
-            *)
-              echo "Unknown build target."
-              exit 1
-              ;;
-          esac
-
-      # ------------------------------------------------------------
-      # Build system-compatible vendor_boot
-      # Only relevant to this device tree / vendor_boot workflow.
-      # ------------------------------------------------------------
-      - name: Build system-compatible vendor_boot
-        if: inputs.BUILD_TARGET == 'vendorboot'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          cd "${FOX_PATH}"
-
-          chmod +x \
-            "${{ inputs.DEVICE_PATH }}/tools/prepare-platform-ramdisk.sh" \
-            "${{ inputs.DEVICE_PATH }}/tools/build-system-compatible-vendor-boot.sh"
-
-          "${{ inputs.DEVICE_PATH }}/tools/prepare-platform-ramdisk.sh"
-
-          "${{ inputs.DEVICE_PATH }}/tools/build-system-compatible-vendor-boot.sh"
-
-      # ------------------------------------------------------------
-      # Save build log
-      # ------------------------------------------------------------
-      - name: Build information
-        if: always()
-        shell: bash
-        run: |
-          echo "=== Runner ==="
-          uname -a
-
-          echo
-          echo "=== CPU ==="
-          nproc
-          lscpu | grep -E 'Model name|CPU\(s\)' || true
-
-          echo
-          echo "=== Memory ==="
-          free -h
-
-          echo
-          echo "=== Disk ==="
-          df -h
-
-          echo
-          echo "=== ccache ==="
-          ccache -s || true
-
-      # ------------------------------------------------------------
-      # Release metadata
-      # ------------------------------------------------------------
-      - name: Set Release Properties
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "BUILD_DATE=$(TZ=Asia/Shanghai date +%Y%m%d)" >> "$GITHUB_ENV"
-
-          DEVICE_TREE_URL="${{ inputs.DEVICE_TREE }}"
-
-          if [[ "${DEVICE_TREE_URL}" == *.git ]]; then
-            DEVICE_TREE_URL="${DEVICE_TREE_URL%.git}"
-          fi
-
-          echo "DEVICE_TREE_URL=${DEVICE_TREE_URL}" >> "$GITHUB_ENV"
-
-      # ------------------------------------------------------------
-      # Release
-      # ------------------------------------------------------------
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/out/target/product/${{ inputs.DEVICE_NAME }}/OrangeFox*.img
-            OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/out/target/product/${{ inputs.DEVICE_NAME }}/OrangeFox*.zip
-          name: OrangeFox Recovery for ${{ inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
-          tag_name: ${{ github.run_id }}
-          body: |
-            ## OrangeFox Recovery Build - Unofficial
-
-            Build: fox_${{ inputs.MANIFEST_BRANCH }}
-
-            Device: [Device Tree/Branch](${{ env.DEVICE_TREE_URL }}/tree/${{ inputs.DEVICE_TREE_BRANCH }})
-
-            Commit: [${{ env.COMMIT_ID }}](${{ env.DEVICE_TREE_URL }}/commit/${{ env.COMMIT_ID }})
-
-            Build target: ${{ inputs.BUILD_TARGET }}
+    - name: Clean-up
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: Build Environment
+      run: |
+        sudo apt install aria2 linux-modules-extra-$(uname -r) zram-tools -y
+        git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master
+        cd scripts
+        sudo bash setup/android_build_env.sh
+        cd .. && rm -rf scripts
+        # Redendent apt cleanup
+        sudo apt autoclean >/dev/null || true
+        sudo apt autoremove -qy 2>/dev/null || true
+        sudo rm -rf /var/cache/apt/archives/ 2>/dev/null || true
+
+    - name: Maximize build space
+      uses: easimon/maximize-build-space@master
+      with:
+        root-reserve-mb: '3072'
+
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      if: inputs.USE_CCACHE
+      with:
+        max-size: "2G"
+        create-symlink: true
+
+    - name: Setup zram
+      run: |
+        sudo modprobe zram
+        sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap
+        sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap
+        sudo systemctl restart zramswap
+        zramctl
+
+    - name: Set-up Manifest
+      if: inputs.MANIFEST_BRANCH == '12.1' || inputs.MANIFEST_BRANCH == '14.1'
+      run: |
+        mkdir -p ${GITHUB_WORKSPACE}/OrangeFox
+        cd ${GITHUB_WORKSPACE}/OrangeFox
+        git config --global user.name "${{ github.actor }}"
+        git config --global user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+        git clone https://gitlab.com/OrangeFox/sync.git -b master
+        cd sync
+
+        MAX_RETRIES=3
+        COUNT=0
+        until ./orangefox_sync.sh --branch ${{ inputs.MANIFEST_BRANCH }} --path ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }} || [ $COUNT -eq $MAX_RETRIES ]; do
+          COUNT=$((COUNT+1))
+          echo "La sincronización falló por problemas de servidor/red. Reintentando ($COUNT/$MAX_RETRIES)..."
+          sleep 10
+        done
+        
+        if [ $COUNT -eq $MAX_RETRIES ]; then
+          echo "No se pudo sincronizar el manifiesto tras varios intentos."
+          exit 1
+        fi
+
+    - name: Clone Android13+ Dependencies For 12.1 Branch
+      if: inputs.MANIFEST_BRANCH == '12.1'
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+        sed -i 's/<project name="android_hardware_qcom_bootctrl" path="hardware\/qcom-caf\/bootctrl" remote="LineageOS" revision="lineage-19.1-caf" \/>/<project name="android_hardware_qcom_bootctrl" path="hardware\/qcom-caf\/bootctrl" remote="LineageOS" revision="lineage-21.0-caf" \/>/g' ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/.repo/manifests/twrp-default.xml
+        sed -i '/<!-- Include phh'\''s treble repo for lptools support -->/i \    <!-- Include libmicrohttpd for TWRP -->\n    <project name="adontoo/android_external_libmicrohttpd" path="external/libmicrohttpd" remote="github" revision="ofox-14.1" />\n' ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/.repo/manifests/twrp-default.xml
+        sed -i '/<project path="bootable\/recovery" name="android_bootable_recovery" remote="TeamWin" revision="android-12.1"\/>/d' ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/.repo/manifests/twrp-default.xml
+        mv ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/bootable/recovery ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/bootable/recovery-ofrp
+        repo sync
+        mv ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/bootable/recovery-ofrp ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/bootable/recovery
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/bionic/
+        wget "https://github.com/adontoo/OrangeFox-android_platform_bionic/commit/85b1a7100083006927376f30bb8a67885c6dd71f.patch" -O bionic.patch
+        git am bionic.patch
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/external/libmicrohttpd
+        sed -i 's/^static enum MHD_Result send_response/static enum MHD_Result __attribute__((unused)) send_response/' server.c
+
+    - name: Patching the Source Code For 12.1 Branch
+      if: inputs.MANIFEST_BRANCH == '12.1'
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/bootable/recovery
+        git remote add ymdzq https://github.com/ymdzq/OrangeFox_Recovery && git fetch ymdzq fox_12.1 && git merge --no-ff ymdzq/fox_12.1 -m "Apply custom patches"
+        if [ "${{ inputs.ADD_WLAN_SUPPORT }}" = "true" ]; then
+        wget "https://github.com/ymdzq/OrangeFox_Recovery/commit/f8712872b9ec663b658a1e8eba4840877fe45ea6.patch" -O wlan.patch
+        git am wlan.patch
+        wget "https://github.com/ymdzq/OrangeFox_Recovery/commit/55743730c43681a777c4eacddd9d64a84dce3a54.patch" -O wlan2.patch
+        git am wlan2.patch
+        fi
+
+    - name: Add WLAN support For 14.1 Branch
+      if: inputs.MANIFEST_BRANCH == '14.1' && inputs.ADD_WLAN_SUPPORT
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+        git clone https://github.com/adontoo/android_external_libmicrohttpd -b ofox-14.1 external/libmicrohttpd
+        rm -rf bionic
+        git clone https://github.com/adontoo/OrangeFox-android_platform_bionic bionic
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/bootable/recovery
+        wget "https://github.com/adontoo/device_xiaomi_sm8750_OFRP/raw/refs/heads/fox_14.1/patches/ofox_bootable_recovery.patch" -O wlan.patch
+        git apply wlan.patch
+        wget "https://github.com/ymdzq/OrangeFox_Recovery/commit/55743730c43681a777c4eacddd9d64a84dce3a54.patch" -O wlan2.patch
+        git apply wlan2.patch
+
+    - name: Clone Device Tree
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+        git clone ${{ inputs.DEVICE_TREE }} -b ${{ inputs.DEVICE_TREE_BRANCH }} ./${{ inputs.DEVICE_PATH }}
+        cd ${{ inputs.DEVICE_PATH }}
+        echo "COMMIT_ID=$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+    - name: Download and prepare magiskboot
+      run: |
+        DOWNLOAD_URL=$(curl -s "https://api.github.com/repos/topjohnwu/Magisk/releases?per_page=1&include_prereleases=true" | jq -r '.[0].assets[] | select(.name | test("Magisk-.*\\.apk")) | .browser_download_url')
+
+        if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "null" ]; then
+          echo "Error: No se pudo obtener la URL de descarga de Magisk."
+          exit 1
+        fi
+
+        echo "Descargando desde: $DOWNLOAD_URL"
+        curl -L --retry 3 "$DOWNLOAD_URL" -o Magisk.apk
+
+        mkdir -p ~/magiskboot
+        unzip -q Magisk.apk "lib/*/libmagiskboot.so" -d ~/magiskboot
+
+        FOX_PATH="${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}"
+
+        mkdir -p "${FOX_PATH}/vendor/recovery/prebuilt/arm"
+        mkdir -p "${FOX_PATH}/vendor/recovery/prebuilt/arm64"
+        mkdir -p "${FOX_PATH}/vendor/recovery/tools"
+
+        cp -f ~/magiskboot/lib/armeabi-v7a/libmagiskboot.so "${FOX_PATH}/vendor/recovery/prebuilt/arm/magiskboot_updated"
+        cp -f ~/magiskboot/lib/arm64-v8a/libmagiskboot.so "${FOX_PATH}/vendor/recovery/prebuilt/arm64/magiskboot_updated"
+        cp -f ~/magiskboot/lib/x86_64/libmagiskboot.so "${FOX_PATH}/vendor/recovery/tools/magiskboot"
+
+    - name: Building OrangeFox
+      run: |
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_14.1
+    
+        if [[ true == true ]]; then
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+          sed -i 's/return sandboxConfig\.working/return false/g' build/soong/ui/build/sandbox_linux.go
+        fi
+    
+        source build/envsetup.sh
+        export ALLOW_MISSING_DEPENDENCIES=true
+        
+        set -e
+    
+        if [[ 14.1 == '14.1' ]]; then
+          lunch twrp_spinel-ap2a-eng && make clean && mka adbd vendorbootimage
+        else
+          lunch twrp_spinel-eng && make clean && mka adbd vendorbootimage
+        fi
+
+    - name: Build system-compatible vendor_boot
+      run: |
+        set -e
+
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_14.1
+
+        chmod +x \
+          device/xiaomi/spinel/tools/prepare-platform-ramdisk.sh \
+          device/xiaomi/spinel/tools/build-system-compatible-vendor-boot.sh
+
+        device/xiaomi/spinel/tools/prepare-platform-ramdisk.sh
+
+        device/xiaomi/spinel/tools/build-system-compatible-vendor-boot.sh
+        
+    - name: Set Release Properties
+      run: |
+        echo "BUILD_DATE=$(TZ=Asia/Shanghai date +%Y%m%d)" >> $GITHUB_ENV
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
+
+        DEVICE_TREE_URL="${{ inputs.DEVICE_TREE }}"
+        if [[ "${DEVICE_TREE_URL}" == *.git ]]; then
+          DEVICE_TREE_URL="${DEVICE_TREE_URL%.git}"
+        fi
+        echo "DEVICE_TREE_URL=${DEVICE_TREE_URL}" >> $GITHUB_ENV
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@master
+      with:
+        files: |
+          OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/out/target/product/${{ inputs.DEVICE_NAME }}/OrangeFox*.img
+          OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}/out/target/product/${{ inputs.DEVICE_NAME }}/OrangeFox*.zip
+        name: OrangeFox Recovery for ${{ inputs.DEVICE_NAME }} // ${{ env.BUILD_DATE }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          ## OrangeFox Recovery Build - Unofficial
+          Build: fox_${{ inputs.MANIFEST_BRANCH }}
+          Device: [Device Tree/Branch](${{ env.DEVICE_TREE_URL }}/tree/${{ inputs.DEVICE_TREE_BRANCH }})
+          Commit: Most recent [commit](${{ env.DEVICE_TREE_URL }}/commit/${{ env.COMMIT_ID }}) during building.
+          
