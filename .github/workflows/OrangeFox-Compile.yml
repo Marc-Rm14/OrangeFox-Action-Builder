@@ -199,7 +199,7 @@ jobs:
 
     - name: Building OrangeFox
       run: |
-        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_14.1
+        cd ${GITHUB_WORKSPACE}/OrangeFox/fox_${{ inputs.MANIFEST_BRANCH }}
     
         if [[ true == true ]]; then
           export USE_CCACHE=1
@@ -213,9 +213,9 @@ jobs:
         set -e
     
         if [[ 14.1 == '14.1' ]]; then
-          lunch twrp_spinel-ap2a-eng && make clean && mka adbd vendorbootimage
+          lunch twrp_spinel-ap2a-eng && mka adbd vendorbootimage
         else
-          lunch twrp_spinel-eng && make clean && mka adbd vendorbootimage
+          lunch twrp_spinel-eng && mka adbd vendorbootimage
         fi
 
     - name: Build system-compatible vendor_boot
