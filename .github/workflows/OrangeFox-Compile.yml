@@ -245,7 +245,7 @@ jobs:
       - name: Building OrangeFox
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
           cd "${ORANGEFOX_TOP}"
 
           if [ "${{ inputs.USE_CCACHE }}" = "true" ]; then
@@ -255,9 +255,7 @@ jobs:
           fi
 
           export TOP="${ORANGEFOX_TOP}"
-          set +u
           source build/envsetup.sh
-          set -u
           export ALLOW_MISSING_DEPENDENCIES=true
 
           if [ "${{ inputs.MANIFEST_BRANCH }}" = "14.1" ]; then
